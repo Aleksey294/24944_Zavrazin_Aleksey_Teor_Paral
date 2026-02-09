@@ -13,7 +13,7 @@ using namespace std;
 int main(){
     const int N = 10000000;
     const real_t step = real_t(0.1);
-    int sum = 0;
+    real_t sum = 0;
 
     vector<real_t> sin_values(N);
 
@@ -21,11 +21,7 @@ int main(){
     {
         real_t x = static_cast<real_t>(i) * step;
         sin_values[i] = sin(x);
-    }
-
-    for (const auto& value : sin_values)
-    {
-        sum += value;
+        sum += sin_values[i];
     }
     
     cout << sum << endl;
