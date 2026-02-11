@@ -40,10 +40,6 @@ cmake --build build
 - USE_DOUBLE=OFF — используется float
 - USE_DOUBLE=ON — используется double
 
-В коде это реализовано следующим образом:
-
-#ifdef USE_DOUBLE
-using real_t = double;
-#else
-using real_t = float;
-#endif
+## Вывод
+# float - 47.87
+# double - 47.8377
