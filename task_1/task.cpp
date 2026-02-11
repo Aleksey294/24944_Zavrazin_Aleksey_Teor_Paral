@@ -17,7 +17,7 @@ int main(){
 
     for (int i = 0; i < N; i++)
     {
-        real_t x = i * M_PI / 180; 
+        real_t x = i * M_PI * 2 / N; 
         sin_values[i] = sin(x);
         sum += sin_values[i];
     }
