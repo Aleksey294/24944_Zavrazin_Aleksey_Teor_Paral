@@ -41,5 +41,5 @@ cmake --build build
 - USE_DOUBLE=ON — используется double
 
 ## Вывод
-# float - 47.87
-# double - 47.8377
+# float - 0.094364
+# double - 4.89582e-11
