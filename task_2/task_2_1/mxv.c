@@ -3,143 +3,112 @@
 #include <time.h>
 #include <omp.h>
 
-#ifndef NUM_THREADS
-#define NUM_THREADS 40
-#endif
-
-#ifndef M_SIZE
-#define M_SIZE 40000
-#endif
-
-#ifndef N_SIZE
-#define N_SIZE 40000
-#endif
-
-double duration_serial, duration_parallel;
+static const int THREADS[] = {1, 2, 4, 7, 8, 16, 20, 40};
+static const int THREADS_COUNT = 8;
 
 double fetch_time() {
     struct timespec t_spec;
     timespec_get(&t_spec, TIME_UTC);
-    return ((double)t_spec.tv_sec + (double)t_spec.tv_nsec * 1.e-9);
+    return (double)t_spec.tv_sec + (double)t_spec.tv_nsec * 1e-9;
 }
 
-void calc_mv_serial(double *mat, double *vec, double *res, size_t rows, size_t cols) {
-    for (int r = 0; r < rows; ++r) {
-        double temp_sum = 0.0;
-        for (int c = 0; c < cols; ++c) {
-            temp_sum += mat[r * cols + c] * vec[c];
+void calc_mv(double *mat, double *vec, double *res, size_t rows, size_t cols) {
+#pragma omp parallel for schedule(static)
+    for (size_t r = 0; r < rows; ++r) {
+        double sum = 0.0;
+        for (size_t c = 0; c < cols; ++c) {
+            sum += mat[r * cols + c] * vec[c];
         }
-        res[r] = temp_sum;
+        res[r] = sum;
     }
 }
 
-void calc_mv_parallel(double *mat, double *vec, double *res, size_t rows, size_t cols) {
-#pragma omp parallel num_threads(NUM_THREADS)
-    {
-        int total_threads = omp_get_num_threads();
-        int thread_id = omp_get_thread_num();
-        int chunk_size = rows / total_threads;
-        int start_row = thread_id * chunk_size;
-        int end_row = (thread_id == total_threads - 1) ? (rows - 1) : (start_row + chunk_size - 1);
-        
-        for (int r = start_row; r <= end_row; ++r) {
-            double temp_sum = 0.0;
-            for (int c = 0; c < cols; ++c) {
-                temp_sum += mat[r * cols + c] * vec[c];
-            }
-            res[r] = temp_sum;
-        }
-    }
-}
-
-void verify_serial(size_t cols, size_t rows) {
-    double *matrix = (double*)malloc(sizeof(*matrix) * rows * cols);
-    double *vector = (double*)malloc(sizeof(*vector) * cols);
-    double *result = (double*)malloc(sizeof(*result) * rows);
-
-    if (!matrix || !vector || !result) {
-        free(matrix); free(vector); free(result);
-        fprintf(stderr, "Fatal: Out of memory!\n");
-        exit(EXIT_FAILURE);
-    }
+double run_serial(double *mat, double *vec, double *res, size_t rows, size_t cols) {
+    double t0 = fetch_time();
 
     for (size_t r = 0; r < rows; ++r) {
+        double sum = 0.0;
         for (size_t c = 0; c < cols; ++c) {
-            matrix[r * cols + c] = (double)(r + c);
+            sum += mat[r * cols + c] * vec[c];
         }
+        res[r] = sum;
     }
 
-    for (size_t c = 0; c < cols; ++c) {
-        vector[c] = (double)c;
-    }
-
-    duration_serial = fetch_time();
-    calc_mv_serial(matrix, vector, result, rows, cols);
-    duration_serial = fetch_time() - duration_serial;
-
-    printf("[Serial]   Time elapsed: %.6f seconds\n", duration_serial);
-    
-    free(matrix);
-    free(vector);
-    free(result);
+    return fetch_time() - t0;
 }
 
-void verify_parallel(size_t cols, size_t rows) {
-    double *matrix = (double*)malloc(sizeof(*matrix) * rows * cols);
-    double *vector = (double*)malloc(sizeof(*vector) * cols);
-    double *result = (double*)malloc(sizeof(*result) * rows);
+double run_parallel(double *mat, double *vec, double *res,
+                     size_t rows, size_t cols, int threads) {
 
-    if (!matrix || !vector || !result) {
-        free(matrix); free(vector); free(result);
-        fprintf(stderr, "Fatal: Out of memory!\n");
-        exit(EXIT_FAILURE);
-    }
+    omp_set_num_threads(threads);
 
-    #pragma omp parallel num_threads(NUM_THREADS)
-    {
-        int total_threads = omp_get_num_threads();
-        int thread_id = omp_get_thread_num();
-        int chunk_size = rows / total_threads;
-        int start_row = thread_id * chunk_size;
-        int end_row = (thread_id == total_threads - 1) ? (rows - 1) : (start_row + chunk_size - 1);
-        
-        for (int r = start_row; r <= end_row; ++r) {
-            for (int c = 0; c < cols; ++c) {
-                matrix[r * cols + c] = (double)(r + c);
-            }
-            result[r] = 0.0;
+    double t0 = fetch_time();
+
+#pragma omp parallel for schedule(static)
+    for (size_t r = 0; r < rows; ++r) {
+        double sum = 0.0;
+        for (size_t c = 0; c < cols; ++c) {
+            sum += mat[r * cols + c] * vec[c];
         }
+        res[r] = sum;
     }
 
-    for (size_t c = 0; c < cols; ++c) {
-        vector[c] = (double)c;
-    }
-
-    duration_parallel = fetch_time();
-    calc_mv_parallel(matrix, vector, result, rows, cols);
-    duration_parallel = fetch_time() - duration_parallel;
-
-    printf("[Parallel] Time elapsed: %.6f seconds\n", duration_parallel);
-    
-    free(matrix);
-    free(vector);
-    free(result);
+    return fetch_time() - t0;
 }
 
-int main(int argc, char *argv[]) {
-    size_t rows_cnt = M_SIZE;
-    size_t cols_cnt = N_SIZE;
+void run_case(size_t rows, size_t cols) {
+    printf("\n==============================\n");
+    printf("Matrix: %zu x %zu\n", rows, cols);
+    printf("==============================\n");
 
-    if (argc > 1) rows_cnt = (size_t)atol(argv[1]);
-    if (argc > 2) cols_cnt = (size_t)atol(argv[2]);
+    double *mat = malloc(sizeof(double) * rows * cols);
+    double *vec = malloc(sizeof(double) * cols);
+    double *res = malloc(sizeof(double) * rows);
 
-    printf("--- Matrix-Vector Product ---\n");
-    printf("Configuration: Matrix %zu x %zu, OpenMP threads = %d\n\n", rows_cnt, cols_cnt, NUM_THREADS);
+    if (!mat || !vec || !res) {
+        printf("Memory allocation failed!\n");
+        exit(1);
+    }
 
-    verify_serial(cols_cnt, rows_cnt);
-    verify_parallel(cols_cnt, rows_cnt);
-    
-    printf("\nOverall speedup factor: %.6fx\n", duration_serial / duration_parallel);
+    // init
+    for (size_t r = 0; r < rows; ++r)
+        for (size_t c = 0; c < cols; ++c)
+            mat[r * cols + c] = (double)(r + c);
+
+    for (size_t c = 0; c < cols; ++c)
+        vec[c] = (double)c;
+
+    // SERIAL
+    double t_serial = run_serial(mat, vec, res, rows, cols);
+    printf("[Serial]   time: %.6f s\n", t_serial);
+
+    // PARALLEL VARIANTS
+    for (int i = 0; i < THREADS_COUNT; ++i) {
+        int t = THREADS[i];
+
+        double t_par = run_parallel(mat, vec, res, rows, cols, t);
+        printf("[OMP %2d]   time: %.6f s | speedup: %.3fx\n",
+               t, t_par, t_serial / t_par);
+    }
+
+    free(mat);
+    free(vec);
+    free(res);
+}
+
+int main() {
+    size_t sizes[][2] = {
+        {20000, 20000},
+        {40000, 40000}
+    };
+
+    int cases = 2;
+
+    printf("OpenMP benchmark: matrix-vector multiplication\n");
+
+    for (int i = 0; i < cases; ++i) {
+        run_case(sizes[i][0], sizes[i][1]);
+    }
 
     return 0;
 }
