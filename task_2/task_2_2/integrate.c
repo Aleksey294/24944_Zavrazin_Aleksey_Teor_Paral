@@ -3,88 +3,109 @@
 #include <time.h>
 #include <omp.h>
 
-#ifndef NUM_THREADS
-#define NUM_THREADS 1
-#endif
-
 const double PI_CONST = 3.14159265358979323846;
 const double limit_a = -4.0;
 const double limit_b = 4.0;
 const int total_steps = 40000000;
 
+int THREADS_LIST[] = {1, 2, 4, 7, 8, 16, 20, 40};
+int THREADS_COUNT = 8;
+
 double get_runtime() {
     struct timespec t_spec;
     timespec_get(&t_spec, TIME_UTC);
-    return ((double)t_spec.tv_sec + (double)t_spec.tv_nsec * 1.e-9);
+    return (double)t_spec.tv_sec + (double)t_spec.tv_nsec * 1.e-9;
 }
 
 double math_function(double val) {
     return exp(-val * val);
 }
 
-double compute_integral_serial(double (*func_ptr)(double), double start, double end, int steps) {
+double compute_integral_omp(double (*func_ptr)(double),
+                             double start,
+                             double end,
+                             int steps,
+                             int num_threads) {
+
     double step_size = (end - start) / steps;
     double accumulated_sum = 0.0;
 
-    for (int k = 0; k < steps; ++k) {
-        accumulated_sum += func_ptr(start + step_size * (k + 0.5));
-    }
+    omp_set_num_threads(num_threads);
 
-    return accumulated_sum * step_size;
-}
-
-double compute_integral_omp(double (*func_ptr)(double), double start, double end, int steps) {
-    double step_size = (end - start) / steps;
-    double accumulated_sum = 0.0;
-
-#pragma omp parallel num_threads(NUM_THREADS)
+#pragma omp parallel
     {
         int num_t = omp_get_num_threads();
         int t_id = omp_get_thread_num();
+
         int chunk = steps / num_t;
         int lower_bound = t_id * chunk;
-        int upper_bound = (t_id == num_t - 1) ? (steps - 1) : (lower_bound + chunk - 1);
-        
+        int upper_bound = (t_id == num_t - 1) ? (steps - 1)
+                                               : (lower_bound + chunk - 1);
+
         double local_sum = 0.0;
 
         for (int k = lower_bound; k <= upper_bound; ++k) {
             local_sum += func_ptr(start + step_size * (k + 0.5));
         }
 
-        #pragma omp atomic
-        accumulated_sum += local_sum;  
+#pragma omp atomic
+        accumulated_sum += local_sum;
     }
 
     return accumulated_sum * step_size;
 }
 
-double eval_serial() {
-    double start_time = get_runtime();
-    double integral_res = compute_integral_serial(math_function, limit_a, limit_b, total_steps);
-    double duration = get_runtime() - start_time;
-    printf("[Serial] Result: %.12f; error: %.12f\n", integral_res, fabs(integral_res - sqrt(PI_CONST)));
-    return duration;
+double compute_serial(double (*func_ptr)(double),
+                      double start,
+                      double end,
+                      int steps) {
+
+    double step_size = (end - start) / steps;
+    double sum = 0.0;
+
+    for (int k = 0; k < steps; ++k) {
+        sum += func_ptr(start + step_size * (k + 0.5));
+    }
+
+    return sum * step_size;
 }
 
-double eval_parallel() {
-    double start_time = get_runtime();
-    double integral_res = compute_integral_omp(math_function, limit_a, limit_b, total_steps);
-    double duration = get_runtime() - start_time;
-    printf("[Parallel] Result: %.12f; error: %.12f\n", integral_res, fabs(integral_res - sqrt(PI_CONST)));
-    return duration;
-}
+int main() {
 
-int main(int argc, char **argv) {
-    printf("--- Integral Calculation for exp(-x^2) ---\n");
-    printf("Range: [%.1f, %.1f], steps = %d\n", limit_a, limit_b, total_steps);
-    printf("Configured threads: %d\n\n", NUM_THREADS);
+    printf("--- Integral exp(-x^2) benchmark ---\n");
+    printf("Range: [%.1f, %.1f], steps = %d\n\n",
+           limit_a, limit_b, total_steps);
 
-    double duration_serial = eval_serial();
-    double duration_parallel = eval_parallel();
+    // SERIAL (один раз)
+    double t0 = get_runtime();
+    double serial_result =
+        compute_serial(math_function, limit_a, limit_b, total_steps);
+    double serial_time = get_runtime() - t0;
 
-    printf("Time (serial implementation):   %.6f sec\n", duration_serial);
-    printf("Time (parallel implementation): %.6f sec\n", duration_parallel);
-    printf("Calculated speedup: %.2fx\n", duration_serial / duration_parallel);
-    
+    printf("[Serial]   result = %.12f | time = %.6f s\n\n",
+           serial_result, serial_time);
+
+    // PARALLEL VARIANTS
+    for (int i = 0; i < THREADS_COUNT; i++) {
+
+        int threads = THREADS_LIST[i];
+
+        double t1 = get_runtime();
+        double par_result =
+            compute_integral_omp(math_function,
+                                  limit_a,
+                                  limit_b,
+                                  total_steps,
+                                  threads);
+
+        double par_time = get_runtime() - t1;
+
+        printf("[OMP %2d]   time = %.6f s | speedup = %.3fx | error = %.12f\n",
+               threads,
+               par_time,
+               serial_time / par_time,
+               fabs(par_result - sqrt(PI_CONST)));
+    }
+
     return 0;
 }
